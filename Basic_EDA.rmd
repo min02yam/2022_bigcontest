@@ -1,0 +1,626 @@
+---
+title: "EDA"
+output: github_document
+author: "김민영"
+---
+
+
+## 1.패키지 및 데이터 로드
+```{r 패키지}
+suppressPackageStartupMessages({
+    require(DataExplorer)
+    require(skimr)
+    require(data.table)
+    require(dplyr)
+    require(magrittr)
+    require(googledrive)
+    require(ggplot2)
+    require(lubridate)
+})
+```
+
+```{r 환경 설정}
+#options(digits =2)
+options(scipen=999)
+
+getwd()
+dir = tempfile(fileext = ".csv")
+user_id = "---------------------------------"
+loan_id = "---------------------------------"
+drive_download(as_id(user_id), path = dir, overwrite = TRUE)
+```
+
+
+```{r 데이터 로드}
+user = fread(dir,
+    col.names = c('신청서번호', '유저번호','생년월일','성별','한도조회_당시_시간',
+    '한도조회_당시_신용점수','연소득','근로형태','입사연월','고용형태',
+    '주거소유형태','대출희망금액','대출목적','개인회생자_여부','개인회생자납입_여부',
+    '기대출수','기대출금액'))
+
+drive_download(as_id(loan_id), path = dir, overwrite = TRUE)
+loan = fread(dir, 
+    col.names = c('신청서번호','한도조회일시','금융사번호','상품번호','승인한도',
+    '승인금리','신청_여부'))
+```
+
+```{r loan_테스트셋 전처리}
+loan %<>% filter(!is.na(승인한도) | !is.na(승인금리) ) #ver. 9/20에 따라 결측치 제거
+loan_cmp = loan %>% filter(!is.na(신청_여부))
+loan_test = loan %>% filter(is.na(신청_여부))
+```
+
+
+## 2.BASIC EDA
+### 2-1. loan
+```{r}
+plot_intro(loan_cmp)
+plot_missing(loan_cmp)
+summary(loan_cmp)
+```
+1. 결측치 없음
+2. 금융사번호, 상품번호, 승인한도, 승인금리에 따른 신청여부 궁금함->모델 개발 후 
+3. 금융사 몇 개? 62개 (16제외전)
+4. 상품 몇 개? 171개 (16의 238제외전)
+5. 승인한도 최대 최소? 승인한도가 0인 것도 있음 확인 필요
+6. 승인금리 최대 최소? 1.50~20
+
+
+```{r }
+str(loan_cmp)
+unique(loan$금융사번호) %>% length
+unique(loan$상품번호) %>% length
+table(loan$금융사번호)
+summary(loan)
+
+```
+16번은 5개밖에 없음 
+
+
+```{r}
+loan %>% filter(금융사번호 ==16) %>% View
+loan_test$금융사번호 %>% table 
+loan_cmp$금융사번호 %>% table
+
+loan[, 상품개수 :=.N, by=.(금융사번호,상품번호)]
+
+loan %>% filter(상품개수 <=10) %>% View
+
+loan %>% filter(상품번호 %in% c(211,225,238,240,241)) %>% 
+    arrange(금융사번호, 상품번호) %>% View
+
+
+loan %>%  filter(금융사번호 %in% c(21, 24, 27, 49) )
+
+금융사_21$상품번호 %>% table
+loan$상품번호 %>% table
+
+
+```
+1. test에 16번 없음. 금융사 16 데이터 제거
+2. 금융사당 상품 몇 개 있는지 보고 상품번호 개수 적은거 삭제하거나 수정 
+    특히 21금융사(test에 있음 )
+
+```{r 금융사21}
+loan %>%  filter(상품번호 ==241 )
+
+#step1
+금융사_21 = loan %>%  filter(금융사번호 == 21)
+금융사_21 %>% group_by(상품번호) %>% 
+    summarise(m_승인한도 = round(mean(승인한도),3),
+    m_승인금리 = round(mean(승인금리),3),
+    M_승인한도 = round(median(승인한도),3),
+    M_승인금리 = round(median(승인금리),3)
+    ) %>% View()
+#step2
+table(금융사_21$상품번호) 
+table(금융사_21$상품번호) %>% prop.table * 100 
+
+#step3
+금융사_21[,'상품번호'] = factor(금융사_21$상품번호)
+
+# 상품 별 승인금리 - 바이올린
+ggplot(금융사_21) +
+ aes(x = 상품번호, y = 승인금리, fill = 상품번호, colour = 상품번호, 
+ group = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ labs(title = "금융사21", subtitle = "상품 별 승인금리") +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", plot.title = element_text(size = 25L, 
+ face = "bold", hjust = 0.5), plot.subtitle = element_text(size = 15L, hjust = 0.5), axis.title.y = element_text(size = 15L, 
+ face = "bold"), axis.title.x = element_text(size = 15L, face = "bold"))
+# 상품 별 승인한도 - 히스토그램 
+금융사_21 %>%
+ filter(!(상품번호 %in% "241")) %>%
+ ggplot() +
+ aes(x = 승인한도, fill = 상품번호, colour = 상품번호) +
+ geom_histogram(bins = 30L) +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ labs(y = " ", title = "금융사21", 
+ subtitle = "상품 별 승인한도 분포") +
+ theme_gray() +
+ theme(legend.position = "none", plot.title = element_text(size = 25L, 
+ face = "bold", hjust = 0.5), plot.subtitle = element_text(size = 15L, hjust = 0.5), axis.title.y = element_text(size = 15L, 
+ face = "bold"), axis.title.x = element_text(size = 15L, face = "bold")) +
+ facet_wrap(vars(상품번호), 
+ scales = "free_y")
+```
+테스트에 있는 금융사 번호 21 (241 세개) 의 노이즈 처리 위한 과정
+step1. 금융사 21 자체 상품으로 대체하려고 했는데 평균 승인한도 차이가 큼
+step2. 빈도 분석 결과 19가 그나마 가장 가까운 것 같음
+step3. 바이올린- 분포가 가장 비슷함 , 히스토그램(정규분포 아님 ) -> 미디안 값 비슷한 196으로 대체
+결론. 241 -> 196
+
+
+
+```{r 금융사24}
+
+loan %>% filter(상품번호 == 211) # 데이터 하나 존재
+
+금융사_24 = loan %>%  filter(금융사번호 == 24)
+#금융사_24[, 상품개수 :=.N, by=상품번호]
+table(금융사_24$상품번호) 
+table(금융사_24$상품번호) %>% prop.table * 100 
+
+금융사_24 %>% group_by(상품번호) %>% 
+    summarise(m_승인한도 = round(mean(승인한도),3),
+    m_승인금리 = round(mean(승인금리),3),
+    M_승인한도 = round(median(승인한도),3),
+    M_승인금리 = round(median(승인금리),3)
+    ) %>% 
+    View()
+
+plot_histogram(금융사_24$승인한도)
+plot_histogram(금융사_24$승인금리)
+금융사_24 %>% head
+
+금융사_24[,'상품번호'] = factor(금융사_24$상품번호)
+
+#상품 별 승인한도 분포 - 바이올린 플랏
+금융사_24 %>%
+ filter(!(상품번호 %in% "211")) %>%
+ ggplot() +
+ aes(x = 상품번호, y = 승인한도, fill = 상품번호, colour = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ labs(title = "금융사24", subtitle = "상품 별 승인한도 분포") +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", plot.title = element_text(size = 20L, face = "bold", hjust = 0.5), 
+ plot.subtitle = element_text(size = 15L, hjust = 0.5), plot.caption = element_text(size = 911L, 
+ face = "bold.italic", hjust = 0.5), axis.title.y = element_text(size = 15L, face = "bold"), 
+ axis.title.x = element_text(size = 15L, face = "bold"))
+
+#상품 별 승인금리 분포 
+금융사_24 %>%
+ filter(!(상품번호 %in% "211")) %>%
+ ggplot() +
+ aes(x = 상품번호, y = 승인금리, fill = 상품번호, colour = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ labs(title = "금융사24", subtitle = "상품 별 승인금리 분포") +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", plot.title = element_text(size = 20L, face = "bold", hjust = 0.5), 
+ plot.subtitle = element_text(size = 15L, hjust = 0.5), plot.caption = element_text(size = 911L, 
+ face = "bold.italic", hjust = 0.5), axis.title.y = element_text(size = 15L, face = "bold"), 
+ axis.title.x = element_text(size = 15L, face = "bold"))
+``` 
+1. 211 데이터는 딱 하나만 존재, 비율도 적음 
+2. 빈도표 제사(민, 미디안)
+3. 분포 그래프 제시
+결론. 211 -> 70 
+
+```{r 금융사27}
+loan %>% filter(상품번호 == 240) # 데이터 하나 존재
+
+금융사_27 = loan %>%  filter(금융사번호 == 27)
+
+#step1
+금융사_27 %>% group_by(상품번호) %>% 
+    summarise(m_승인한도 = round(mean(승인한도),3),
+    m_승인금리 = round(mean(승인금리),3),
+    M_승인한도 = round(median(승인한도),3),
+    M_승인금리 = round(median(승인금리),3)
+    ) %>% 
+    View()
+
+#step2
+table(금융사_27$상품번호) 
+table(금융사_27$상품번호) %>% prop.table * 100 
+
+#step3
+금융사_27[,'상품번호'] = factor(금융사_27$상품번호)
+
+## 승인한도 바이올린 차트
+금융사_27 %>%
+ filter(!(상품번호 %in% "240")) %>%
+ ggplot() +
+ aes(x = 상품번호, y = 승인한도, fill = 상품번호, colour = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", plot.subtitle = element_text(size = 15L, 
+ face = "bold", hjust = 0.5), axis.title.y = element_text(size = 15L, face = "bold"), axis.title.x = element_text(size = 15L, 
+ face = "bold"))
+
+## 승인금리 
+금융사_27 %>%
+ filter(!(상품번호 %in% "240")) %>%
+ ggplot() +
+ aes(x = 상품번호, y = 승인금리, fill = 상품번호, colour = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", plot.subtitle = element_text(size = 15L, 
+ face = "bold", hjust = 0.5), axis.title.y = element_text(size = 15L, face = "bold"), axis.title.x = element_text(size = 15L, 
+ face = "bold"))
+```
+결론. 240-> 176
+
+``` {r 금융사49-225 }
+loan %>% filter(상품번호 == 225) # 데이터 하나 존재
+
+금융사_49 = loan %>%  filter(금융사번호 == 49)
+#step1 빈도분석 
+금융사_49 %>% group_by(상품번호) %>% 
+    summarise(m_승인한도 = round(mean(승인한도),3),
+    m_승인금리 = round(mean(승인금리),3),
+    M_승인한도 = round(median(승인한도),3),
+    M_승인금리 = round(median(승인금리),3)
+    ) %>% 
+    View()
+#step2
+table(금융사_49$상품번호) 
+table(금융사_49$상품번호) %>% prop.table * 100 
+
+#step3 그래프
+금융사_49[,'상품번호'] = factor(금융사_49$상품번호)
+esquisser()
+# 승인한도
+금융사_49 %>%
+ filter(!(상품번호 %in% "225")) %>%
+ ggplot() +
+ aes(x = 상품번호, y = 승인한도, fill = 상품번호, colour = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", axis.title.y = element_text(size = 15L, 
+ face = "bold"), axis.title.x = element_text(size = 15L, face = "bold"))
+ ##승인금리 
+금융사_49 %>%
+ filter(!(상품번호 %in% "225")) %>%
+ ggplot() +
+ aes(x = 상품번호, y = 승인금리, fill = 상품번호, colour = 상품번호) +
+ geom_violin(adjust = 1L, scale = "width") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ coord_flip() +
+ theme_gray() +
+ theme(legend.position = "none", axis.title.y = element_text(size = 15L, 
+ face = "bold"), axis.title.x = element_text(size = 15L, face = "bold"))
+
+
+##잘 모르겠어서 신청_여부 추가
+금융사_49[,'신청_여부'] = factor(금융사_49$신청_여부) 
+#승인 한도에 따른
+ 금융사_49 %>%
+ filter(!(상품번호 %in% "225")) %>%
+ filter(!is.na(신청_여부)) %>%
+ ggplot() +
+ aes(x = 신청_여부, y = 승인한도, fill = 신청_여부, colour = 신청_여부) +
+ geom_violin(adjust = 1L, scale = "area") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ theme_gray() +
+ theme(legend.position = "none", axis.title.y = element_text(size = 15L, face = "bold"), 
+ axis.title.x = element_text(size = 15L, face = "bold")) +
+ facet_wrap(vars(상품번호), scales = "free_y")
+
+#승인금리에 따른
+금융사_49 %>%
+ filter(!(상품번호 %in% "225")) %>%
+ filter(!is.na(신청_여부)) %>%
+ ggplot() +
+ aes(x = 신청_여부, y = 승인금리, fill = 신청_여부, colour = 신청_여부) +
+ geom_violin(adjust = 1L, scale = "area") +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ theme_gray() +
+ theme(legend.position = "none", axis.title.y = element_text(size = 15L, face = "bold"), 
+ axis.title.x = element_text(size = 15L, face = "bold")) +
+ facet_wrap(vars(상품번호), scales = "free_y")
+
+
+
+
+```
+
+빈도표상 맞지 않음.
+그래프 - 승인 한도를 봤을 때 136, 195와 비슷하지만 애매함.
+신청했을때(1) 승인 금리 보고 136으로 결정.. 
+결론 225 -> 136
+
+```{r 승인한도 0}
+#step1
+loan %>% filter(승인한도 == 0 ) %>% nrow() 
+
+loan_한도0 = loan %>% filter(승인한도 == 0)
+loan_한도0 %>% arrange(금융사번호, 상품번호) %>% View()
+loan_한도0$신청_여부 %>% table
+loan_한도0$금융사번호 %>% table
+loan_한도0$상품번호 %>% table
+loan_한도0 %>% head
+
+loan_한도0$승인금리 %>% summary
+
+loan_한도0[,'신청_여부'] = factor(loan_한도0$신청_여부)
+require(esquisse)
+esquisser()
+
+#시각화
+##신청여부에 따른 승인금리 
+loan_한도0 %>%
+ filter(!is.na(신청_여부)) %>%
+ ggplot() +
+ aes(x = 승인금리, fill = 신청_여부, colour = 신청_여부, group = 신청_여부) +
+ geom_density(adjust = 1L) +
+ scale_fill_hue(direction = 1) +
+ scale_color_hue(direction = 1) +
+ theme_gray() +
+ theme(legend.position = "none", axis.title.y = element_text(size = 15L, face = "bold"), axis.title.x = element_text(size = 15L, 
+ face = "bold"))
+#-> 금리가 높은데 신청함. 
+
+```
+
+#step1 승인한도 ==0인 데이터 총 7025 개 있음
+잘못표시됐거나 혹은 저 의미가 0원이라는 뜻이 아님.
+승인 한도는 0이지만 승인 금리 17프로짜리 있는거 보면 2금융권 아니면 카드론 수준
+유저 스펙 테이블이랑 묶어서 보거나
+
+#step2 그래프
+금리가 높은데 신청함. -> 유저 스펙 테이블 묶어서-> *1*신용점수랑 보기.
+
+승인한도가 없다는 뜻인지 아니면 0원이라는 뜻인지
+후자의 경우 *2*기존대출이 있는 경우
+
+
+### 2.1 전처리 
+```{r loan EDA에 따른 전처리}
+#step1. 금융사번호16 (상품번호 238) 제거
+loan %<>% filter(! 상품번호 == 238)
+#stpe2. 값 대체 
+loan[상품번호 == 211, 상품번호:=70]
+loan[상품번호 == 225, 상품번호:=136]
+loan[상품번호 == 240, 상품번호:=176]
+loan[상품번호 == 241, 상품번호:=196]
+#step3. 한도조회일시
+
+#1.시분초 -> 시분, 일, 시간, weekday 변수 추가 
+loan_time = loan %>% mutate(한도조회_당시_시간 = parse_date_time(substr(한도조회일시, 1, 16), orders="ymdHM"),
+    일 = day(한도조회_당시_시간),
+    시간 = hour(한도조회_당시_시간),
+    wday = wday(한도조회_당시_시간, label=TRUE)
+    ) 
+#loan_time %>% arrange(신청서번호)  %>% head(29) %>% View()
+
+loan_time %>% nrow () # 13519863
+```
+
+```{r user 시간 전처리}
+user_time = user %>% 
+    mutate(한도조회_당시_시간 = parse_date_time(substr(한도조회_당시_시간, 1, 16), orders="ymdHM")
+    )
+
+
+
+user_time %>% arrange(신청서번호) %>% head(20) %>% View()
+user_time %>% nrow()   # 1394216
+```
+
+loan_time은 신청서 당 여러 금융사가 있기 때문에 많음.
+
+```{r merging-step1}
+#loan_time %>% head
+#user_time %>% head
+#setkey(loan_time, 신청서번호)
+#setkey(user_time, NULL)
+#new = merge(loan_time, user_time, by=c('신청서번호', '한도조회_당시_시간'), all=FALSE)
+new_신청서번호 = merge(loan_time , user, by= '신청서번호', all=FALSE)
+
+new %>% arrange(신청서번호) %>% head(20) %>% View()  # 한도조회시간 분이 안맞음
+new_신청서번호  %>% 
+    select(1,12,3,4,8,15,7) %>% 
+    arrange(신청서번호) %>% head(25) %>% View()
+#한도조회_당시_시간.x와 한도조회_당시_시간.y가 다른 값이 있음
+```
+
+```{r merging-step2}
+names(new_신청서번호)
+
+new_신청서번호 %>% 
+    filter( 한도조회_당시_시간.x    !=  한도조회_당시_시간.y) %>% 
+    nrow()
+
+new_신청서번호 %>% nrow()
+938849/13519863 * 100 # 6.94%
+
+#조회
+new_신청서번호 %>% 
+    filter( 한도조회_당시_시간.x    !=  한도조회_당시_시간.y) %>%
+    select(1,12,3,4,8,15,7) %>%
+    head(20) %>%
+    View()
+#분 차이 구함
+new_time_span = new_신청서번호 %>%
+    filter( 한도조회_당시_시간.x    !=  한도조회_당시_시간.y) %>%
+    select(1,12,3,4,8,15,7) %>%
+    mutate(시간_범위 = interval(한도조회_당시_시간.x, 한도조회_당시_시간.y))
+
+
+#new_time_span$시간_범위 %>% class
+#new_time_span$시간_범위 %>% head(3) %>% View()
+
+new_time_span[,'시간_범위'] = as.integer(new_time_span$시간_범위)
+new_time_span$시간_범위  = new_time_span$시간_범위/60 #분으로 수정
+
+##
+boxplot(new_time_span$시간_범위)
+quantile(new_time_span$시간_범위, c(0.999))
+# 0.999퀀타일 값이 -1이므로 그 이상의 값은 이상치로 판단한다 .
+new_time_span$시간_범위 %>% plot_histogram()
+# 정규분포 아님 
+# 분포와 상관 없는 로버스트한 방법으로 (pp.64 상자그림 논리)
+## pp.66
+bp = boxplot(new_time_span$시간_범위, col=5, pch=21, bg="red", 
+    main= "Outlier Dectection in Boxplot")
+text(1, bp$out, which(new_time_span$시간_범위 == bp$out), pos = 4)
+text(0.8,  bp$out , "Potential Outlers", pos= 2)
+arrows(0.8, bp$out, 0.95, bp$out, length = 0.1)
+new_time_span$시간_범위 %>% table
+##
+out = quantile(new_time_span$시간_범위, c(0.999))
+
+quantile(new_time_span$시간_범위, c(0.25, 0.5, 0.75, 0.999)) 
+
+
+new_time_span$시간_범위%>% table %>% prop.table *100  %>% round(2)
+new_time_span %>% filter(시간_범위 <  out) %>%
+    head(20) %>%
+    View()
+#요약통계량 확인
+skim(new_time_span$시간_범위)
+summary(new_time_span$시간_범위)
+```
+
+결론. `한도조회_당시_시간.x` 만 따름 
+
+```{r merging-step3}
+new_신청서번호 %>% nrow()
+loan_time %>% nrow()
+user %>% nrow()
+```
+머지한 데이터가 loan의 row 개수와 같다 -> 하지만 가이드를 보면
+ 'loan_result'에 있는데, 'user_spec'에 없는 경우가 존재  from ver.9/20
+
+```{r 확인}
+loan_apply=unique(loan_time$신청서번호) %>% data.table
+user_apply=unique(user$신청서번호) %>% data.table
+new_apply = unique(new_신청서번호$신청서번호) %>% data.table
+
+
+names(loan_apply) = "id"
+names(user_apply) ="id"
+names(new_apply) ="id"
+
+loan_apply %<>% arrange(id) 
+user_apply %<>% arrange(id) 
+new_apply %<>% arrange(id_new)
+
+
+loan_apply %>% nrow() # 968722
+user_apply %>% nrow() #1394216
+new_apply %>% nrow() #968722 
+
+inner = merge(loan_apply, user_apply ,  by='id', all=FALSE)
+left_outer = merge(loan_apply, user_apply, by='id',all.x=TRUE)
+inner %>% nrow
+left_outer %>% nrow
+
+```
+
+
+```{r}
+new_신청서번호 %>% head %>% View()
+#컴럼 순서 수정
+names(new_신청서번호)
+DT = new_신청서번호 %>% select( 신청_여부, 신청서번호, 유저번호, 금융사번호, 상품번호, 
+    승인한도, 승인금리, 생년월일, 성별,
+    연소득, 근로형태, 입사연월, 고용형태, 주거소유형태,
+    한도조회_당시_시간.x, 일, 시간, wday,
+    한도조회_당시_신용점수, 대출희망금액,대출목적,
+    개인회생자_여부,개인회생자납입_여부,기대출수,기대출금액)
+
+
+DT %>% head 
+```
+
+dir = tempfile(fileext = ".csv")
+drive_download(as_id("1EFH9GG_04qpkKyFMdMLV-k5HvbXi7KMH"), path = dir, overwrite = TRUE)
+DT= fread(dir)
+
+
+
+
+```{r}
+new %>% filter(승인한도 == 0) -> new_승인한도0   
+new_승인한도0 %>% select(기대출수, 기대출금액, 승인한도) %>%
+    arrange(기대출수) %>% tail(20)
+
+new %>% arrange(기대출수) %>% head
+
+user$기대출수 %>% summary
+
+
+user$기대출수 %>% table 
+user %>% filter(!is.na(기대출수)) %>% nrow
+user %>% filter(!is.na(기대출금액)) %>% nrow
+
+user %>% filter(!is.na(기대출수) & is.na(기대출금액)) %>% tail
+
+#기대출 수 보다 기대출 금액이 적음. 
+##CASE1
+user %>% filter(!is.na(기대출수) & is.na(기대출금액)) %>% 
+    arrange(-기대출수) %>% head
+
+#case1. 대출 헀는데(!is.na(기대출수)) 대출 금액이 없는(is.na(기대출금액)) 경우 
+#-> 기대출수 전부 1개인 경우임
+
+##CASE2
+user %>% filter(is.na(기대출수) & !is.na(기대출금액)) %>% 
+    arrange(-기대출수) %>% head
+
+
+new %>% head
+user %>% arrange(한도조회_당시_시간) %>% head(10) %>% View
+loan %>% arrange(한도조회일시) %>% head(30) %>% View
+
+```
+
+기대출수 제거함 최저 [1,250] range 너무 큼
+
+
+### 2-1. user_spec
+테이블 머지전 eda 해보고 -> 머지 후 추가로 진행
+```{r intro}
+user %>% head %>% View
+plot_intro(user)
+plot_missing(user)
+
+str(user)
+summary(user)
+
+```
+테이블 머지전 eda 해보고 -> 머지 후 추가로 진행하려고 헀는데
+기본적인 정보(생년월일, 성별)에 NA가 있어서 -> 머지 후 진행
+
+
+
+```{r !예측모델 결과로 하기}
+loan_cmp %>% select(-신청서번호,-한도조회일시) %>%
+    group_by(금융사번호)
+```
+
