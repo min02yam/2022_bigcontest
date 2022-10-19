@@ -559,7 +559,7 @@ DT %>% head
 ```
 
 dir = tempfile(fileext = ".csv")
-drive_download(as_id("1EFH9GG_04qpkKyFMdMLV-k5HvbXi7KMH"), path = dir, overwrite = TRUE)
+drive_download(as_id("---------------------"), path = dir, overwrite = TRUE)
 DT= fread(dir)
 
 
